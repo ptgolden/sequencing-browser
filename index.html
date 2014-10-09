@@ -4,10 +4,26 @@
   <head>
     <meta charset="utf-8">
     <title>Sequencing data browser</title>
+    <style type="text/css">
+      .axis text { opacity: 0; }
+      .axis:first-of-type text, .axis:last-of-type text { opacity: 1; }
+
+      .axis path, .axis line {
+        fill: none;
+        stroke: black;
+        shape-rendering: crispEdges;
+      }
+    </style>
   </head>
 
   <body>
 
+    <h2>Patterns</h2>
+    <div>
+      <button type="button">Add pattern</button>
+    </div>
+
+    <h2>Graph</h2>
     <div id="vis_container"></svg>
 
     <script type="text/javascript" src="lib/d3.v3.js"></script>

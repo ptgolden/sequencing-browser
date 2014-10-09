@@ -1,14 +1,14 @@
 // Constants
 var consts = {
   // Height of total plot area
-  PLOT_WIDTH: 1800,
-  PLOT_HEIGHT: 1000,
+  PLOT_WIDTH: 1200,
+  PLOT_HEIGHT: 600,
 
   // Height and width of the cell graphs
   CELL_HEIGHT: 500,
   CELL_WIDTH: 300,
 
-  // Padding between cell graphs
+  // Padding above and below cell graphs
   CELL_PADDING: 30
 }
 
@@ -39,7 +39,10 @@ function parseFile(dataFile) {
         return row;
       });
 
-      resolve(data);
+      resolve({
+        filename: dataFile,
+        data: data
+      });
     });
   });
 }
@@ -49,7 +52,6 @@ function drawGraph() {
     .append('svg')
     .attr('width', consts.PLOT_WIDTH)
     .attr('height', consts.PLOT_HEIGHT)
-    .style('background', '#f0f0f0')
 }
 
 drawGraph();
@@ -60,15 +62,15 @@ Promise.all([
   parseFile(DATA_FILES[3])
 ]).then(drawSamples);
 
-function drawSamples(parsedSamples) {
-  var maxRpkm = d3.max(parsedSamples, function (genes) {
-    return d3.max(genes, function (gene) {
-      return gene.rpkm;
-    });
-  });
+var filters = [];
 
+filters.push(function (gene) {
+  return gene.rpkms.every(function (d) { return d > 500 });
+});
+
+function drawSamples(parsedSamples) {
   var genePresences = parsedSamples.reduce(function (acc, sample) {
-    sample.forEach(function (gene) {
+    sample.data.forEach(function (gene) {
       if (!acc.hasOwnProperty(gene.name)) acc[gene.name] = [];
       acc[gene.name].push(gene.rpkm)
     });
@@ -82,47 +84,64 @@ function drawSamples(parsedSamples) {
   var geneLines = presentGenes.map(function (geneName) {
     return {
       name: geneName,
-      coords: genePresences[geneName].reduce(function (acc, el, i, all) {
-        if (i === 0) return acc;
-        acc.push([all[i-1], el]);
-        return acc;
-      }, [])
+      rpkms: genePresences[geneName]
     }
   });
 
+  filters.forEach(function (filter) {
+    geneLines = geneLines.filter(filter);
+  });
+
+  var maxRpkm = d3.max(geneLines, function (gene) { return d3.max(gene.rpkms) });
+  var minRpkm = d3.min(geneLines, function (gene) { return d3.min(gene.rpkms) });
+
   var y = d3.scale.linear()
-    .domain([maxRpkm, 0])
-    .range([0, consts.PLOT_HEIGHT])
+    .domain([maxRpkm, minRpkm])
+    .range([0 + consts.CELL_PADDING, consts.PLOT_HEIGHT - consts.CELL_PADDING])
+    .nice()
 
-  var cells = d3.select('svg').selectAll('.cells').data(parsedSamples);
+  var yAxis = d3.svg.axis()
+    .scale(y)
+    .orient('right')
+    .tickValues( y.ticks(7).concat(y.domain()) )
 
-  cells.enter().append('g')
-    .attr('class', 'cells')
-    .attr('transform', function (d, i) {
-      return 'translate(' + (300 * (i + 1)) + ',0)';
-    });
+  var x = function (i) { return 50 + (300 * i) }
 
-  cells.selectAll('circle')
-    .data(function (d) {
-      return d.filter(function (gene) { return presentGenes.indexOf(gene.name) !== -1 });
-    })
-    .enter()
-    .append('circle')
-    .attr('r', '1')
-    .attr('cx', 0)
-    .attr('cy', function (d) { return y(d.rpkm) })
+  var line = d3.svg.line()
+    .x(function (d, i) { return x(i) })
+    .y(function (d, i) { return y(d) })
+    .interpolate('cardinal')
+    .tension(0.85)
 
-  var lines = d3.select('svg').selectAll('.lines').data(geneLines)
-        .enter()
-      .append('g').attr('class', 'lines');
-
-  lines.selectAll('line').data(function (d) { return d.coords })
+  d3.select('svg').selectAll('path').data(geneLines)
       .enter()
-    .append('line')
-    .attr('x1', function (d, i) { return 300 * (i + 1) })
-    .attr('y1', function (d) { return y(d[0]) })
-    .attr('x2', function (d, i) { return 300 * (i + 2) })
-    .attr('y2', function (d) { return y(d[1]) })
+    .append('path').datum(function (d) { return d.rpkms })
+    .attr('d', line)
     .attr('stroke', 'blue')
-    .style('opacity', '.1')
+    .attr('stroke-width', '1')
+    .style('opacity', '.4')
+    .attr('fill', 'none')
+
+  d3.select('svg').selectAll('.axis').data(parsedSamples.map(function (d) { return d.filename }))
+      .enter()
+    .append('g')
+    .attr('class', 'axis')
+    .attr('transform', function (d, i) { return 'translate(' + x(i) + ',0)' })
+    .each(function (d, i) {
+      var first = i === 0
+        , last = i === (parsedSamples.length - 1)
+
+      var axis = d3.select(this)
+        .call(
+          yAxis
+            .orient(first ? 'left': 'right')
+            .innerTickSize( (first || last) ? 6 : 12)
+        )
+
+      if (! (first || last) ) {
+        axis.selectAll('.tick line')
+          .attr('transform', 'translate(-6,0)')
+      }
+
+    })
 }
