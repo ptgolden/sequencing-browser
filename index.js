@@ -2,7 +2,7 @@
 var consts = {
   // Height of total plot area
   PLOT_WIDTH: 1200,
-  PLOT_HEIGHT: 600,
+  PLOT_HEIGHT: 800,
 
   // Height and width of the cell graphs
   CELL_HEIGHT: 500,
@@ -65,7 +65,7 @@ Promise.all([
 var filters = [];
 
 filters.push(function (gene) {
-  return gene.rpkms.every(function (d) { return d > 500 });
+  return gene.rpkms.some(function (d) { return d > 1500 });
 });
 
 function drawSamples(parsedSamples) {
@@ -97,13 +97,14 @@ function drawSamples(parsedSamples) {
 
   var y = d3.scale.linear()
     .domain([maxRpkm, minRpkm])
-    .range([0 + consts.CELL_PADDING, consts.PLOT_HEIGHT - consts.CELL_PADDING])
+    .range([0 + consts.CELL_PADDING, consts.CELL_HEIGHT - consts.CELL_PADDING])
     .nice()
 
+  var tickValues = y.ticks(7).concat(y.domain());
   var yAxis = d3.svg.axis()
     .scale(y)
     .orient('right')
-    .tickValues( y.ticks(7).concat(y.domain()) )
+    .tickValues(tickValues)
 
   var x = function (i) { return 50 + (300 * i) }
 
@@ -121,6 +122,11 @@ function drawSamples(parsedSamples) {
     .attr('stroke-width', '1')
     .style('opacity', '.4')
     .attr('fill', 'none')
+
+  var outlines = {
+    'top': y(d3.max(tickValues)),
+    'bottom': y(d3.min(tickValues))
+  }
 
   d3.select('svg').selectAll('.axis').data(parsedSamples.map(function (d) { return d.filename }))
       .enter()
@@ -141,7 +147,45 @@ function drawSamples(parsedSamples) {
       if (! (first || last) ) {
         axis.selectAll('.tick line')
           .attr('transform', 'translate(-6,0)')
+        axis.selectAll('.tick text').remove();
       }
 
+      axis
+        .append('text')
+        .text(function (d) { return d })
+        .attr('y', outlines.bottom)
+        .attr('dy', '.8em')
+        .attr('text-anchor', 'start')
+        .attr('transform', 'rotate(25, 0, ' + outlines.bottom + ')')
+
     })
+
+  d3.select('svg').insert('g', ':first-child').selectAll('.guidelines')
+    .data(tickValues.map(function (yCoord) {
+      // x1, y1, x2, y2
+      return [x(0), y(yCoord), x(parsedSamples.length -1), y(yCoord)];
+    }))
+      .enter()
+    .append('line')
+    .attr('x1', function (d) { return d[0] })
+    .attr('y1', function (d) { return d[1] })
+    .attr('x2', function (d) { return d[2] })
+    .attr('y2', function (d) { return d[3] })
+    .attr('stroke', '#ccc')
+
+  d3.select('svg').append('line')
+    .attr('x1', x(0))
+    .attr('x2', x(parsedSamples.length - 1))
+    .attr('y1', outlines.bottom)
+    .attr('y2', outlines.bottom)
+    .attr('stroke', 'black')
+    .attr('stroke-width', 2)
+
+  d3.select('svg').append('line')
+    .attr('x1', x(0))
+    .attr('x2', x(parsedSamples.length - 1))
+    .attr('y1', outlines.top)
+    .attr('y2', outlines.top)
+    .attr('stroke', 'black')
+    .attr('stroke-width', 2)
 }
