@@ -1,4 +1,7 @@
-// Constants
+// jshint laxcomma: true, asi: true
+
+/* Constants */
+
 var consts = {
   // Height of total plot area
   PLOT_WIDTH: 1200,
@@ -10,16 +13,18 @@ var consts = {
 
   // Padding above and below cell graphs
   CELL_PADDING: 30
-}
+};
 
-
-//
 var DATA_FILES = [
   'data/193_4cell_RPKM.txt',
   'data/194_4cell_RPKM.txt',
   'data/195_4cell_RPKM.txt',
   'data/196_4cell_RPKM.txt'
 ];
+
+
+
+/* Utilities */
 
 function parseFile(dataFile) {
   return new Promise(function (resolve, reject) {
@@ -47,145 +52,276 @@ function parseFile(dataFile) {
   });
 }
 
-function drawGraph() {
-  var svg = d3.select('#vis_container')
-    .append('svg')
-    .attr('width', consts.PLOT_WIDTH)
-    .attr('height', consts.PLOT_HEIGHT)
+
+/* Data structures */
+function Organism() {
+  this.reset();
 }
 
-drawGraph();
-Promise.all([
-  parseFile(DATA_FILES[0]),
-  parseFile(DATA_FILES[1]),
-  parseFile(DATA_FILES[2]),
-  parseFile(DATA_FILES[3])
-]).then(drawSamples);
+Organism.prototype = {
+  reset: function () {
+    this.cells = {};
+    this.genome = null;
+  },
 
-var filters = [];
+  addCell: function (name, data) {
+    var genomeCheck
+      , rpkms = []
 
-filters.push(function (gene) {
-  return gene.rpkms.some(function (d) { return d > 1500 });
-});
-
-function drawSamples(parsedSamples) {
-  var genePresences = parsedSamples.reduce(function (acc, sample) {
-    sample.data.forEach(function (gene) {
-      if (!acc.hasOwnProperty(gene.name)) acc[gene.name] = [];
-      acc[gene.name].push(gene.rpkm)
-    });
-    return acc;
-  }, {});
-
-  var presentGenes = Object.keys(genePresences).filter(function (geneName) {
-    return d3.sum(genePresences[geneName]);
-  });
-  
-  var geneLines = presentGenes.map(function (geneName) {
-    return {
-      name: geneName,
-      rpkms: genePresences[geneName]
+    if (!this.genome) {
+      this.genome = data.map(function (gene) { return gene.name });
     }
-  });
 
-  filters.forEach(function (filter) {
-    geneLines = geneLines.filter(filter);
-  });
+    genomeCheck = this.genome.slice();
 
-  var maxRpkm = d3.max(geneLines, function (gene) { return d3.max(gene.rpkms) });
-  var minRpkm = d3.min(geneLines, function (gene) { return d3.min(gene.rpkms) });
+    data.forEach(function (gene) {
+      var check = genomeCheck.shift();
+      if (gene.name !== check) throw Error('Cell\'s genome not identical to organism\'s genome');
+      rpkms.push(gene.rpkm);
+    });
 
-  var y = d3.scale.linear()
-    .domain([maxRpkm, minRpkm])
-    .range([0 + consts.CELL_PADDING, consts.CELL_HEIGHT - consts.CELL_PADDING])
-    .nice()
+    this.cells[name] = rpkms;
+  },
 
-  var tickValues = y.ticks(7).concat(y.domain());
-  var yAxis = d3.svg.axis()
-    .scale(y)
-    .orient('right')
-    .tickValues(tickValues)
+  removeCell: function (name) {
+    delete this.cells[name];
+  },
 
-  var x = function (i) { return 50 + (300 * i) }
+  getGeneRPKMS: function (geneName) {
+    var idx = this.genome.indexOf(geneName)
+      , genes = {}
 
-  var line = d3.svg.line()
-    .x(function (d, i) { return x(i) })
-    .y(function (d, i) { return y(d) })
-    .interpolate('cardinal')
-    .tension(0.85)
+    if (idx === -1) throw Error('' + geneName + ' is not in this organism\'s genome.');
 
-  d3.select('svg').selectAll('path').data(geneLines)
-      .enter()
-    .append('path').datum(function (d) { return d.rpkms })
-    .attr('d', line)
-    .attr('stroke', 'blue')
-    .attr('stroke-width', '1')
-    .style('opacity', '.4')
-    .attr('fill', 'none')
+    for (var cell in this.cells) {
+      genes[cell] = this.cells[cell][idx];
+    }
 
-  var outlines = {
-    'top': y(d3.max(tickValues)),
-    'bottom': y(d3.min(tickValues))
+    return genes;
+  },
+
+  asMatrix: function () {
+    var cellNames = Object.keys(this.cells)
+      , matrix
+
+    matrix = this.genome.map(function (gene, i) {
+      return cellNames.map(function (cellName) {
+        return this.cells[cellName][i];
+      }, this);
+    }, this);
+
+    return { cells: cellNames, matrix: matrix }
   }
-
-  d3.select('svg').selectAll('.axis').data(parsedSamples.map(function (d) { return d.filename }))
-      .enter()
-    .append('g')
-    .attr('class', 'axis')
-    .attr('transform', function (d, i) { return 'translate(' + x(i) + ',0)' })
-    .each(function (d, i) {
-      var first = i === 0
-        , last = i === (parsedSamples.length - 1)
-
-      var axis = d3.select(this)
-        .call(
-          yAxis
-            .orient(first ? 'left': 'right')
-            .innerTickSize( (first || last) ? 6 : 12)
-        )
-
-      if (! (first || last) ) {
-        axis.selectAll('.tick line')
-          .attr('transform', 'translate(-6,0)')
-        axis.selectAll('.tick text').remove();
-      }
-
-      axis
-        .append('text')
-        .text(function (d) { return d })
-        .attr('y', outlines.bottom)
-        .attr('dy', '.8em')
-        .attr('text-anchor', 'start')
-        .attr('transform', 'rotate(25, 0, ' + outlines.bottom + ')')
-
-    })
-
-  d3.select('svg').insert('g', ':first-child').selectAll('.guidelines')
-    .data(tickValues.map(function (yCoord) {
-      // x1, y1, x2, y2
-      return [x(0), y(yCoord), x(parsedSamples.length -1), y(yCoord)];
-    }))
-      .enter()
-    .append('line')
-    .attr('x1', function (d) { return d[0] })
-    .attr('y1', function (d) { return d[1] })
-    .attr('x2', function (d) { return d[2] })
-    .attr('y2', function (d) { return d[3] })
-    .attr('stroke', '#ccc')
-
-  d3.select('svg').append('line')
-    .attr('x1', x(0))
-    .attr('x2', x(parsedSamples.length - 1))
-    .attr('y1', outlines.bottom)
-    .attr('y2', outlines.bottom)
-    .attr('stroke', 'black')
-    .attr('stroke-width', 2)
-
-  d3.select('svg').append('line')
-    .attr('x1', x(0))
-    .attr('x2', x(parsedSamples.length - 1))
-    .attr('y1', outlines.top)
-    .attr('y2', outlines.top)
-    .attr('stroke', 'black')
-    .attr('stroke-width', 2)
 }
+
+
+/* Drawing */
+function Graph(id, height, width) {
+  height = height || consts.PLOT_HEIGHT;
+  width = width || consts.PLOT_WIDTH;
+
+  this.svg = d3.select(id)
+    .append('svg')
+    .attr('width', width)
+    .attr('height', height);
+
+  this.initData();
+}
+
+Graph.prototype = {
+  // Create the SVG element that will contain the graph
+  initData: function () {
+    this.organism = new Organism();
+    this.filters = {};
+  },
+
+  addCell: function (name, cell) {
+    var that = this;
+
+    this.organism.addCell(name, cell);
+
+    var container = document.querySelector('#present-cells');
+
+    var el = document.createElement('li');
+    el.classList.add('present-cell');
+    el.textContent = name;
+
+    var button = document.createElement('button');
+    button.textContent = 'Remove';
+    button.addEventListener('click', function () {
+      that.removeCell(name);
+      container.removeChild(el);
+    }, false);
+    el.appendChild(button);
+    container.appendChild(el);
+
+    this.draw();
+  },
+
+  removeCell: function (name) {
+    this.organism.removeCell(name);
+    this.draw();
+  },
+
+  clearCells: function () {
+    this.organism.reset();
+    this.draw();
+  },
+
+  addFilter: function (filter) {
+    this.filters[filter.id] = filter;
+    this.draw();
+  },
+
+  removeFilter: function (filterId) {
+    delete this.filters[filterId];
+    this.draw();
+  },
+
+  clearFilters: function () {
+    this.filters = {};
+    this.draw();
+  },
+
+  get data() {
+    var data = this.organism.asMatrix()
+      , genes = []
+
+    // Filter out all non-zero numbers
+    data.matrix = data.matrix.filter(function (arr) { return d3.sum(arr) });
+
+    data.matrix.forEach(function (arr, i) {
+      if (!(d3.sum(arr))) return;
+      genes.push({ name: this.organism.genome[i], rpkms: arr });
+    }, this)
+
+    // Apply filters
+    // TODO
+
+    return { cells: data.cells, genes: genes }
+  },
+
+  draw: function () {
+    var data = this.data
+
+    var maxRPKM = d3.max(data.genes.map(function (g) { return d3.max(g.rpkms) }))
+      , minRPKM = d3.min(data.genes.map(function (g) { return d3.min(g.rpkms) }))
+
+    // Scales
+    var y = d3.scale.linear()
+      .domain([maxRPKM, minRPKM])
+      .range([0 + consts.CELL_PADDING, consts.CELL_HEIGHT - consts.CELL_PADDING])
+      .nice()
+
+    var yAxis = d3.svg.axis()
+      .scale(y)
+      .orient('right')
+      //.tickValues(tickValues)
+
+    var tickValues = y.ticks(7);
+
+    var x = function (i) { return 50 + (300 * i) }
+
+    var outlines = {
+      'top': y(d3.max(tickValues)),
+      'bottom': y(d3.min(tickValues))
+    }
+
+    // Draw axes
+    this.svg.selectAll('*').remove();
+
+    // Top and bottom line
+    this.svg.append('line')
+      .attr('x1', x(0))
+      .attr('x2', x(data.cells.length - 1))
+      .attr('y1', outlines.bottom)
+      .attr('y2', outlines.bottom)
+      .attr('stroke', 'black')
+      .attr('stroke-width', 1)
+
+    this.svg.append('line')
+      .attr('x1', x(0))
+      .attr('x2', x(data.cells.length - 1))
+      .attr('y1', outlines.top)
+      .attr('y2', outlines.top)
+      .attr('stroke', 'black')
+      .attr('stroke-width', 1)
+
+    // Guidelines
+    this.svg.insert('g', ':first-child').selectAll('.guidelines')
+      .data(tickValues.slice(1, -1).map(function (yCoord) {
+        // x1, y1, x2, y2
+        return [x(0), y(yCoord), x(data.cells.length -1), y(yCoord)];
+      }))
+        .enter()
+      .append('line')
+      .attr('x1', function (d) { return d[0] })
+      .attr('y1', function (d) { return d[1] })
+      .attr('x2', function (d) { return d[2] })
+      .attr('y2', function (d) { return d[3] })
+      .attr('stroke', '#ccc')
+
+
+    this.svg.selectAll('.axis').data(data.cells.map(function (cell) { return { name: cell } }))
+        .enter()
+      .append('g')
+      .attr('class', 'axis')
+      .attr('transform', function (d, i) { return 'translate(' + x(i) + ',0)' })
+      .each(function (d, i) {
+        var first = i === 0
+          , last = i === (data.cells.length - 1)
+
+        var axis = d3.select(this)
+          .call(
+            yAxis
+              .orient(first ? 'left': 'right')
+              .innerTickSize( (first || last) ? 6 : 12)
+          )
+
+        if (! (first || last) ) {
+          axis.selectAll('.tick line')
+            .attr('transform', 'translate(-6,0)')
+          axis.selectAll('.tick text').remove();
+        }
+
+        axis
+          .append('text')
+          .text(function (d) { return d.name })
+          .attr('y', outlines.bottom)
+          .attr('dy', '.8em')
+          .attr('text-anchor', 'start')
+          .attr('transform', 'rotate(25, 0, ' + outlines.bottom + ')')
+
+      });
+
+    var lineFn = d3.svg.line()
+      .x(function (d, i) { return x(i) })
+      .y(function (d, i) { return y(d) })
+      .interpolate('cardinal')
+      .tension(0.85)
+
+    this.svg.selectAll('.gene-path').remove().data(data.genes)
+        .enter()
+      .append('path').datum(function (d) { return d.rpkms; })
+      .classed('gene-path', true)
+      .attr('d', lineFn)
+      .attr('stroke', 'blue')
+      .attr('stroke-width', '1')
+      .style('opacity', '.1')
+      .attr('fill', 'none')
+  }
+}
+
+/* Running the thing */
+
+var graph = new Graph('#vis_container');
+
+parseFile(DATA_FILES[0]).then(function (dataFile) {
+  graph.addCell(dataFile.filename, dataFile.data);
+});
+parseFile(DATA_FILES[1]).then(function (dataFile) {
+  graph.addCell(dataFile.filename, dataFile.data);
+});
+parseFile(DATA_FILES[2]).then(function (dataFile) {
+  graph.addCell(dataFile.filename, dataFile.data);
+});
