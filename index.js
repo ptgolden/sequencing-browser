@@ -126,6 +126,7 @@ function Graph(id, height, width) {
     .attr('height', height);
 
   this.initData();
+  this.initListeners();
 }
 
 Graph.prototype = {
@@ -133,6 +134,10 @@ Graph.prototype = {
   initData: function () {
     this.organism = new Organism();
     this.filters = {};
+  },
+
+  initListeners: function () {
+    d3.select('#scale').on('change', this.draw.bind(this));
   },
 
   addCell: function (name, cell) {
@@ -202,13 +207,20 @@ Graph.prototype = {
   },
 
   draw: function () {
-    var data = this.data
+    var data = this.data;
+
+    var log = document.querySelector('#scale_log').checked;
 
     var maxRPKM = d3.max(data.genes.map(function (g) { return d3.max(g.rpkms) }))
-      , minRPKM = d3.min(data.genes.map(function (g) { return d3.min(g.rpkms) }))
+      , minRPKM = d3.min(data.genes.map(function (g) {
+        if (log) {
+          return d3.min(g.rpkms.filter(function (d) { return d }));
+        }
+        return d3.min(g.rpkms)
+      }))
 
     // Scales
-    var y = d3.scale.linear()
+    var y = (log ? d3.scale.log() : d3.scale.linear())
       .domain([maxRPKM, minRPKM])
       .range([0 + consts.CELL_PADDING, consts.CELL_HEIGHT - consts.CELL_PADDING])
       .nice()
@@ -217,7 +229,7 @@ Graph.prototype = {
       .scale(y)
       .orient('right')
       //.tickValues(tickValues)
-
+    
     var tickValues = y.ticks(7);
 
     var x = function (i) { return 50 + (300 * i) }
@@ -248,19 +260,20 @@ Graph.prototype = {
       .attr('stroke-width', 1)
 
     // Guidelines
-    this.svg.insert('g', ':first-child').selectAll('.guidelines')
-      .data(tickValues.slice(1, -1).map(function (yCoord) {
-        // x1, y1, x2, y2
-        return [x(0), y(yCoord), x(data.cells.length -1), y(yCoord)];
-      }))
-        .enter()
-      .append('line')
-      .attr('x1', function (d) { return d[0] })
-      .attr('y1', function (d) { return d[1] })
-      .attr('x2', function (d) { return d[2] })
-      .attr('y2', function (d) { return d[3] })
-      .attr('stroke', '#ccc')
-
+    if (!log) {
+      this.svg.insert('g', ':first-child').selectAll('.guidelines')
+        .data(tickValues.slice(1, -1).map(function (yCoord) {
+          // x1, y1, x2, y2
+          return [x(0), y(yCoord), x(data.cells.length -1), y(yCoord)];
+        }))
+          .enter()
+        .append('line')
+        .attr('x1', function (d) { return d[0] })
+        .attr('y1', function (d) { return d[1] })
+        .attr('x2', function (d) { return d[2] })
+        .attr('y2', function (d) { return d[3] })
+        .attr('stroke', '#ccc')
+    }
 
     this.svg.selectAll('.axis').data(data.cells.map(function (cell) { return { name: cell } }))
         .enter()
@@ -284,6 +297,18 @@ Graph.prototype = {
           axis.selectAll('.tick text').remove();
         }
 
+        if (log) {
+          axis.selectAll('.tick text')
+            .text(null)
+          .filter(function (d) {
+            return d / Math.pow(10, Math.ceil(Math.log(d) / Math.LN10 - 1e-12)) === 1;
+          })
+          .text(10)
+          .append('tspan')
+            .attr('dy', '-.7em')
+            .text(function (d) { return Math.round(Math.log(d) / Math.LN10) })
+        }
+
         axis
           .append('text')
           .text(function (d) { return d.name })
@@ -300,9 +325,15 @@ Graph.prototype = {
       .interpolate('cardinal')
       .tension(0.85)
 
+    var min = tickValues[0];
+
     this.svg.selectAll('.gene-path').remove().data(data.genes)
         .enter()
-      .append('path').datum(function (d) { return d.rpkms; })
+      .append('path').datum(function (d) {
+        if (!log) return d.rpkms;
+
+        return d.rpkms.map(function (rpkm) { return rpkm || min });
+      })
       .classed('gene-path', true)
       .attr('d', lineFn)
       .attr('stroke', 'blue')

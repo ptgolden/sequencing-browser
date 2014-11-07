@@ -26,6 +26,10 @@
     </div>
 
     <h2>Graph</h2>
+    <form id="scale">
+      <label>Linear</label><input checked="true" type="radio" name="scale" value="linear">
+      <label>Logarithmic</label><input id="scale_log" type="radio" name="scale" value="log">
+    </form>
     <div id="vis_container"></svg>
 
     <script type="text/javascript" src="lib/d3.v3.js"></script>
