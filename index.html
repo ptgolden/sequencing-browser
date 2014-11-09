@@ -15,14 +15,31 @@
   <body>
 
     <h2>Cells</h2>
-    <ol id="present-cells"></ol>
+    <ul id="present-cells"></ul>
     <div>
       <button type="button">Add cell</button>
     </div>
 
-    <h2>Patterns</h2>
-    <div>
-      <button type="button">Add pattern</button>
+    <h2>Filters</h2>
+    <div id="filters">
+    </div>
+    <button id="js-add-filter" type="button">Add filter</button>
+
+    <div id="basic-filter" style="display: none;">
+      <select name="quantity">
+        <option value=""></option>
+        <option value="any">Any</option>
+        <option value="all">All</option>
+      </select>
+      cells have an RPKM 
+      <select name="limit">
+        <option value=""></option>
+        <option value="gt">greater than</option>
+        <option value="lt">less than</option>
+      </select>
+      <input name="value" type="text" />.
+      <button data-action="save">Save</button>
+      <button data-action="cancel">Cancel</button>
     </div>
 
     <h2>Graph</h2>
@@ -33,6 +50,8 @@
     <div id="vis_container"></svg>
 
     <script type="text/javascript" src="lib/d3.v3.js"></script>
+    <script type="text/javascript" src="lib/jquery-2.1.1.min.js"></script>
+    <script type="text/javascript" src="organism.js"></script>
     <script type="text/javascript" src="index.js"></script>
   </body>
 

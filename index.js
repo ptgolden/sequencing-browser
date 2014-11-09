@@ -23,7 +23,6 @@ var DATA_FILES = [
 ];
 
 
-
 /* Utilities */
 
 function parseFile(dataFile) {
@@ -50,68 +49,6 @@ function parseFile(dataFile) {
       });
     });
   });
-}
-
-
-/* Data structures */
-function Organism() {
-  this.reset();
-}
-
-Organism.prototype = {
-  reset: function () {
-    this.cells = {};
-    this.genome = null;
-  },
-
-  addCell: function (name, data) {
-    var genomeCheck
-      , rpkms = []
-
-    if (!this.genome) {
-      this.genome = data.map(function (gene) { return gene.name });
-    }
-
-    genomeCheck = this.genome.slice();
-
-    data.forEach(function (gene) {
-      var check = genomeCheck.shift();
-      if (gene.name !== check) throw Error('Cell\'s genome not identical to organism\'s genome');
-      rpkms.push(gene.rpkm);
-    });
-
-    this.cells[name] = rpkms;
-  },
-
-  removeCell: function (name) {
-    delete this.cells[name];
-  },
-
-  getGeneRPKMS: function (geneName) {
-    var idx = this.genome.indexOf(geneName)
-      , genes = {}
-
-    if (idx === -1) throw Error('' + geneName + ' is not in this organism\'s genome.');
-
-    for (var cell in this.cells) {
-      genes[cell] = this.cells[cell][idx];
-    }
-
-    return genes;
-  },
-
-  asMatrix: function () {
-    var cellNames = Object.keys(this.cells)
-      , matrix
-
-    matrix = this.genome.map(function (gene, i) {
-      return cellNames.map(function (cellName) {
-        return this.cells[cellName][i];
-      }, this);
-    }, this);
-
-    return { cells: cellNames, matrix: matrix }
-  }
 }
 
 
@@ -144,22 +81,6 @@ Graph.prototype = {
     var that = this;
 
     this.organism.addCell(name, cell);
-
-    var container = document.querySelector('#present-cells');
-
-    var el = document.createElement('li');
-    el.classList.add('present-cell');
-    el.textContent = name;
-
-    var button = document.createElement('button');
-    button.textContent = 'Remove';
-    button.addEventListener('click', function () {
-      that.removeCell(name);
-      container.removeChild(el);
-    }, false);
-    el.appendChild(button);
-    container.appendChild(el);
-
     this.draw();
   },
 
@@ -173,14 +94,16 @@ Graph.prototype = {
     this.draw();
   },
 
-  addFilter: function (filter) {
-    this.filters[filter.id] = filter;
+  addFilter: function (name, filter) {
+    this.filters[name] = filter;
     this.draw();
   },
 
   removeFilter: function (filterId) {
-    delete this.filters[filterId];
-    this.draw();
+    if (filterId in this.filters) {
+      delete this.filters[filterId];
+      this.draw();
+    }
   },
 
   clearFilters: function () {
@@ -188,20 +111,25 @@ Graph.prototype = {
     this.draw();
   },
 
+  passesFilters: function (row) {
+    var ok = true;
+    for (var key in this.filters) {
+      ok = this.filters[key](row);
+      if (!ok) break;
+    }
+    return ok;
+  },
+
   get data() {
     var data = this.organism.asMatrix()
       , genes = []
 
-    // Filter out all non-zero numbers
-    data.matrix = data.matrix.filter(function (arr) { return d3.sum(arr) });
-
     data.matrix.forEach(function (arr, i) {
       if (!(d3.sum(arr))) return;
-      genes.push({ name: this.organism.genome[i], rpkms: arr });
+      if (this.passesFilters(arr)) {
+        genes.push({ name: this.organism.genome[i], rpkms: arr });
+      }
     }, this)
-
-    // Apply filters
-    // TODO
 
     return { cells: data.cells, genes: genes }
   },
@@ -224,6 +152,10 @@ Graph.prototype = {
       .domain([maxRPKM, minRPKM])
       .range([0 + consts.CELL_PADDING, consts.CELL_HEIGHT - consts.CELL_PADDING])
       .nice()
+
+    if (log) {
+      y = y.clamp(true);
+    }
 
     var yAxis = d3.svg.axis()
       .scale(y)
@@ -260,7 +192,7 @@ Graph.prototype = {
       .attr('stroke-width', 1)
 
     // Guidelines
-    if (!log) {
+    if (false) {
       this.svg.insert('g', ':first-child').selectAll('.guidelines')
         .data(tickValues.slice(1, -1).map(function (yCoord) {
           // x1, y1, x2, y2
@@ -325,15 +257,9 @@ Graph.prototype = {
       .interpolate('cardinal')
       .tension(0.85)
 
-    var min = tickValues[0];
-
     this.svg.selectAll('.gene-path').remove().data(data.genes)
         .enter()
-      .append('path').datum(function (d) {
-        if (!log) return d.rpkms;
-
-        return d.rpkms.map(function (rpkm) { return rpkm || min });
-      })
+      .append('path').datum(function (d) { return d.rpkms })
       .classed('gene-path', true)
       .attr('d', lineFn)
       .attr('stroke', 'blue')
@@ -343,16 +269,69 @@ Graph.prototype = {
   }
 }
 
+
 /* Running the thing */
 
 var graph = new Graph('#vis_container');
 
-parseFile(DATA_FILES[0]).then(function (dataFile) {
-  graph.addCell(dataFile.filename, dataFile.data);
+var li = d3.select('#present-cells').selectAll('li').data(DATA_FILES)
+    .enter()
+  .append('li')
+  .text(function (d) { return d })
+
+li.append('button').text('Add').attr('data-graphed', 'no')
+  .on('click', function (d) {
+    var that = this;
+    if (this.dataset.graphed === 'yes') {
+      d3.select(this).text('Add').attr('data-graphed', 'no');
+      graph.removeCell(d);
+    } else {
+      parseFile(d).then(function (dataFile) {
+        d3.select(that).text('Remove').attr('data-graphed', 'yes');
+        graph.addCell(d, dataFile.data);
+      });
+    }
+  })
+
+/* filters */
+var filterCounter = 0;
+$('#js-add-filter').on('click', function () {
+  var name = 'filter' + filterCounter;
+  var $filter = $('#basic-filter')
+    .clone()
+    .show()
+    .prop('id', name)
+    .appendTo('#filters');
+
+  filterCounter += 1;
+
+  $filter
+    .on('click', '[data-action="save"]', function (e) {
+      var quantity = $filter.find('select[name="quantity"]').val()
+        , limit = $filter.find('select[name="limit"]').val()
+        , value = $filter.find('input').val()
+
+      if (!(quantity && limit && value)) return;
+
+      var fn = function (row) {
+        function cmp (d) { return limit === 'gt' ? d > value : d < value }
+        if (quantity === 'any') {
+          return row.some(cmp);
+        } else {
+          return row.every(cmp);
+        }
+      }
+
+      graph.addFilter(name, fn);
+
+      $filter.html('A' + quantity.slice(1) + ' cells have an RPKM ' +
+        (limit === 'gt' ? 'greater than ' : 'less than ') +
+        value + '. <button data-action="cancel">Remove</button>');
+        
+    })
+    .on('click', '[data-action="cancel"]', function (e) {
+      graph.removeFilter(name);
+      $filter.remove();
+    });
 });
-parseFile(DATA_FILES[1]).then(function (dataFile) {
-  graph.addCell(dataFile.filename, dataFile.data);
-});
-parseFile(DATA_FILES[2]).then(function (dataFile) {
-  graph.addCell(dataFile.filename, dataFile.data);
-});
+
