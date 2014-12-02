@@ -4,12 +4,12 @@
 
 var consts = {
   // Height of total plot area
-  PLOT_WIDTH: 1200,
-  PLOT_HEIGHT: 800,
+  PLOT_WIDTH: 900,
+  PLOT_HEIGHT: 610,
 
   // Height and width of the cell graphs
   CELL_HEIGHT: 500,
-  CELL_WIDTH: 300,
+  CELL_WIDTH: 140,
 
   // Padding above and below cell graphs
   CELL_PADDING: 30
@@ -60,9 +60,15 @@ function Graph(id, height, width) {
   this.svg = d3.select(id)
     .append('svg')
     .attr('width', width)
-    .attr('height', height);
+    .attr('height', height)
+    .style('position', 'absolute');
+
+
+  var table = document.getElementById('the-table');
+  this.tableSort = new Tablesort(table, { descending: true });
 
   this.initData();
+  this.drawDrawingPad();
   this.initListeners();
 }
 
@@ -111,45 +117,143 @@ Graph.prototype = {
     this.draw();
   },
 
-  passesFilters: function (row) {
+  passesFilters: function (row, geneName) {
     var ok = true;
     for (var key in this.filters) {
-      ok = this.filters[key](row);
+      ok = this.filters[key](row, geneName);
       if (!ok) break;
     }
     return ok;
   },
 
-  get data() {
+  getData: function (nonZero) {
     var data = this.organism.asMatrix()
-      , genes = []
+      , allGenes = []
+      , filteredGenes = []
+      , max = { all: 0, filtered: 0}
+      , min = { all: Infinity, filtered: Infinity }
 
     data.matrix.forEach(function (arr, i) {
+      var localMax, localMin;
+
       if (!(d3.sum(arr))) return;
-      if (this.passesFilters(arr)) {
-        genes.push({ name: this.organism.genome[i], rpkms: arr });
+
+      allGenes.push({ name: this.organism.genome[i], rpkms: arr });
+
+      localMax = d3.max(arr);
+      localMin = d3.min(nonZero ? arr.filter(parseInt) : arr);
+
+      if (localMax > max.all) max.all = localMax;
+      if (localMin < min.all) min.all = localMin;
+
+      if (this.passesFilters(arr, this.organism.genome[i])) {
+        if (localMax > max.filtered) max.filtered = localMax;
+        if (localMin < min.filtered) min.filtered = localMin;
+        filteredGenes.push({ name: this.organism.genome[i], rpkms: arr });
       }
     }, this)
 
-    return { cells: data.cells, genes: genes }
+    return { cells: data.cells, allGenes: allGenes, filteredGenes: filteredGenes }
+  },
+
+  getLines: function (scale, geneMatrix) {
+    var NUM_BINS = document.querySelector('#clustering').value
+
+    var all = Array.prototype.concat.apply([], geneMatrix);
+
+    var bins = d3.scale.linear()
+      .domain(scale.range())
+      .ticks(NUM_BINS)
+      .reverse()
+      .map(function (px) { return scale.invert(px) })
+
+    var numCells = geneMatrix[0].length;
+     
+    var genesByBin = bins.reduce(function (acc, bin, binIdx) {acc[binIdx] = []; return acc}, {});
+    var binsByGene = geneMatrix.reduce(function (acc, gene, geneIdx) {acc[geneIdx] = []; return acc}, { length: geneMatrix.length });
+
+    for (var cellIdx = 0; cellIdx < numCells; cellIdx++) {
+      var cell = geneMatrix
+        .map(function (gene, geneIdx) { return { geneIdx: geneIdx, rpkm: gene[cellIdx] } })
+        .sort(function (a, b) { return a.rpkm - b.rpkm });
+      var binIdx = 0;
+      var binLength = bins.length;
+      cell.forEach(function (gene) {
+        while (true) {
+          if (gene.rpkm <= bins[binIdx + 1]) {
+            genesByBin[binIdx].push(gene.geneIdx);
+            binsByGene[gene.geneIdx].push(binIdx);
+            break;
+          }
+          binIdx += 1;
+          if (binIdx >= binLength) throw new Error("Couldn't place all elements in bins.");
+        }
+      });
+    }
+
+    var ret = Array.prototype.reduce.call(binsByGene, function (acc, gene, idx) {
+      var seq;
+      for (var i = 0; i < numCells - 1; i++) {
+        seq = gene.slice(i, i + 2);
+        if (!acc[i].hasOwnProperty(seq)) {
+          acc[i][seq] = [];
+        }
+        acc[i][seq].push(idx);
+      }
+      return acc;
+    }, Array.apply(null, { length: numCells - 1 }).map(function () { return {} }));
+
+    var color = d3.scale.linear()
+      .range(["blue","red"])
+      .domain(ret.reduce(function (acc, seq) {
+        var keys = Object.keys(seq);
+        if (seq.hasOwnProperty('0,0')) {
+          keys.splice(keys.indexOf('0,0'), 1);
+        }
+        var sorted = keys.map(function (key) {
+          return seq[key].length
+        }).sort(function (a, b) { return a - b });
+
+        var min = parseInt(sorted.shift(), 10);
+        var max = parseInt(sorted.pop(), 10);
+
+        if (min < acc[0]) acc[0] = min;
+        if (max > acc[1]) acc[1] = max;
+
+        return acc
+
+      }, [Infinity, 0]));
+
+    return ret.map(function (seqs, idx) {
+      return Object.keys(seqs).map(function (key) {
+        var points = key.split(',');
+        return {
+          x1: idx,
+          y1: bins[points[0]],
+          x2: idx + 1,
+          y2: bins[points[1]],
+          color: color(seqs[key].length),
+          genes: seqs[key]
+        }
+      });
+    });
   },
 
   draw: function () {
-    var data = this.data;
-
     var log = document.querySelector('#scale_log').checked;
 
-    var maxRPKM = d3.max(data.genes.map(function (g) { return d3.max(g.rpkms) }))
-      , minRPKM = d3.min(data.genes.map(function (g) {
-        if (log) {
-          return d3.min(g.rpkms.filter(function (d) { return d }));
-        }
-        return d3.min(g.rpkms)
-      }))
+    var data = this.getData(log);
+
+    this.drawTable(data);
+
+    var maxAllRPKM = d3.max(data.allGenes.map(function (gene) { return d3.max(gene.rpkms) }))
+      , minAllRPKM = d3.min(data.allGenes.map(function (gene) { return d3.min(log ? gene.rpkms.filter(parseInt) : gene.rpkms) }))
+      , maxFilteredRPKM = d3.max(data.filteredGenes.map(function (gene) { return d3.max(gene.rpkms) }))
+      , minFilteredRPKM = d3.min(data.filteredGenes.map(function (gene) { return d3.min(log ? gene.rpkms.filter(parseInt) : gene.rpkms) }))
 
     // Scales
     var y = (log ? d3.scale.log() : d3.scale.linear())
-      .domain([maxRPKM, minRPKM])
+      .domain([maxFilteredRPKM, minFilteredRPKM])
       .range([0 + consts.CELL_PADDING, consts.CELL_HEIGHT - consts.CELL_PADDING])
       .nice()
 
@@ -157,14 +261,22 @@ Graph.prototype = {
       y = y.clamp(true);
     }
 
+    this.y = y;
+
+    var y2 = y.copy().domain([maxAllRPKM, minAllRPKM]).nice();
+
     var yAxis = d3.svg.axis()
       .scale(y)
       .orient('right')
-      //.tickValues(tickValues)
+
+    var yAxis2 = d3.svg.axis()
+      .scale(y2)
+      .orient('right')
     
     var tickValues = y.ticks(7);
 
-    var x = function (i) { return 50 + (300 * i) }
+    var x = function (i) { return 150 + (consts.CELL_WIDTH * i) }
+    this.x = x;
 
     var outlines = {
       'top': y(d3.max(tickValues)),
@@ -206,6 +318,40 @@ Graph.prototype = {
         .attr('y2', function (d) { return d[3] })
         .attr('stroke', '#ccc')
     }
+
+    var lineFn = d3.svg.line()
+      .x(function (d, i) { return x(i) })
+      .y(function (d, i) { return y(d) })
+      .interpolate('cardinal')
+      .tension(0.85)
+
+    var lines = this.getLines(y, data.filteredGenes.map(function (g) { return g.rpkms }));
+
+    this.svg.selectAll('.gene-group').data(lines)
+        .enter()
+      .append('g').attr('class', 'gene-group').selectAll('line')
+        .data(function (d) { return d.sort(function(a, b) { return a.genes.length - b.genes.length }) })
+        .enter()
+      .append('line')
+      .attr('x1', function (d, i) { return x(d.x1) })
+      .attr('y1', function (d, i) { return y(d.y1) })
+      .attr('x2', function (d, i) { return x(d.x2) })
+      .attr('y2', function (d, i) { return y(d.y2) })
+      .attr('stroke', function (d, i) { return d.color })
+      .attr('stroke-width', '1')
+      .attr('opacity', '.2')
+
+    /*
+    this.svg.append('g').selectAll('.gene-path').remove().data(data.filteredGenes)
+        .enter()
+      .append('path').datum(function (d) { return d.rpkms })
+      .classed('gene-path', true)
+      .attr('d', lineFn)
+      .attr('stroke', 'blue')
+      .attr('stroke-width', '1')
+      .style('opacity', '.1')
+      .attr('fill', 'none')
+    */
 
     this.svg.selectAll('.axis').data(data.cells.map(function (cell) { return { name: cell } }))
         .enter()
@@ -251,21 +397,214 @@ Graph.prototype = {
 
       });
 
+    var brush = d3.svg.brush().y(y2)
+      //.on('brush', brushed)
+
+    this.svg.append('g')
+      .attr('class', 'brush-axis')
+      .call(yAxis2)
+
+    this.svg.append('g')
+      .attr('class', 'brush')
+      .call(brush)
+      .selectAll('rect')
+        .attr('width', 50)
+
+    var histogramDataAll = d3.layout.histogram()
+      .bins(y2.ticks(50))
+      (Array.prototype.concat.apply([], data.allGenes.map(function (gene) { return gene.rpkms })))
+
+    var histogramDataFiltered = d3.layout.histogram()
+      .bins(y2.ticks(20))
+      (Array.prototype.concat.apply([], data.filteredGenes.map(function (gene) { return gene.rpkms })))
+
+    var histogramX = d3.scale.linear()
+      .domain([0, d3.max(histogramDataAll, function (d) { return d.y })])
+      .range([0, 50])
+
+    var bar = this.svg.selectAll('.bar')
+        .data(histogramDataAll)
+      .enter().append('g')
+        .attr('class', 'bar')
+        .attr('transform', function (d) { return 'translate(' + histogramX(d.y) + ',' + (y2(d.x) - 14) + ')' })
+
+    bar.append('rect')
+      .attr('y', 10)
+      .attr('width', 10)
+      .attr('height', 3)
+
+    var bins = d3.scale.linear().domain(y.range()).ticks(100).reverse().map(function (d) { return y.invert(d) });
+    var hist = d3.layout.histogram().bins(bins);
+
+    data.cells.forEach(function (cell, i) {
+      var these = data.filteredGenes.map(function (d) { return d.rpkms[i] }).sort();
+      var those = data.filteredGenes.map(function (d) { return d.rpkms[i + 1] }).sort();
+      var zzz = hist(these);
+    }, this);
+
+  },
+  
+  drawTable: function (data) {
+    var that = this;
+
+    var wormbase_url = 'http://www.wormbase.org/search/gene/';
+
+    var toDraw = data.filteredGenes.map(function (gene) {
+      var foldChanges = Object.keys(that._foldChanges).map(function (key) {
+        var cells = that._foldChanges[key]
+          , higher = cells[0]
+          , lower = cells[1]
+
+        var orgCells = Object.keys(that.organism.cells)
+          , higherIdx = orgCells.indexOf(higher)
+          , lowerIdx = orgCells.indexOf(lower)
+
+        if (higherIdx === -1 || lowerIdx === -1) return null;
+
+        var higherVal = gene.rpkms[higherIdx]
+          , lowerVal = gene.rpkms[lowerIdx]
+
+        return {
+          label: higher + ' -> ' + lower,
+          value: higherVal / (lowerVal || .0001)
+        }
+      }).filter(function (zzz) { return zzz });
+
+      return {
+        label: gene.name,
+        rpkms: gene.rpkms.slice(),
+        avg: d3.mean(gene.rpkms).toFixed(4),
+        foldChanges: foldChanges
+      }
+    });
+
+    d3.select('#table-label').select('div').remove();
+    d3.select('#table-label').append('div')
+      .html('' + toDraw.length + ' genes ')
+      .append('a')
+      .html(' (download)')
+      .attr('href', '#')
+      .on('click', function () {
+        var tableHTML = '<table>' + document.getElementById('the-table').innerHTML + '</table>';
+
+        tableHTML = '<html><body>' + '<h1>Results from ' + (new Date()) + '</h1>' + tableHTML + '</body></html>';
+
+        var blob = new Blob([tableHTML], {type: 'text/html'});
+        saveAs(blob, 'gene_expression_results.html')
+        return false;
+      });
+
+
+    var foldChanges = toDraw[0].foldChanges.map(function (thing) { return thing.label });
+
+    d3.selectAll('.fold-change-header').remove();
+
+    foldChanges.forEach(function (label) {
+      d3.select('#table-headers').append('th')
+        .attr('class', 'fold-change-header')
+        .html(label);
+    })
+
+    var select = d3.select('#data-table').selectAll('tr')
+      .data(toDraw, function (gene) { return gene.label });
+
     var lineFn = d3.svg.line()
-      .x(function (d, i) { return x(i) })
-      .y(function (d, i) { return y(d) })
+      .x(function (d, i) { return that.x(i) })
+      .y(function (d, i) { return that.y(d) })
       .interpolate('cardinal')
       .tension(0.85)
 
-    this.svg.selectAll('.gene-path').remove().data(data.genes)
-        .enter()
-      .append('path').datum(function (d) { return d.rpkms })
-      .classed('gene-path', true)
-      .attr('d', lineFn)
-      .attr('stroke', 'blue')
-      .attr('stroke-width', '1')
-      .style('opacity', '.1')
-      .attr('fill', 'none')
+    var line = null;
+
+    select.enter()
+      .append('tr')
+      .attr('data-cell', function (d) { return d.label })
+      .html(function (d) {
+        var url = wormbase_url + d.label;
+        var anchor = '<a title="Wormbase" target="_blank" href="' + url + '"><i class="link-icon"></i></a>';
+
+        return '<td>' + anchor + d.label + '</td><td class="mean">' + d.avg + '</td>';
+      })
+      .on('mouseover', function () {
+        var rpkms = d3.select(this).datum().rpkms;
+        line = that.svg.append('path').datum(rpkms)
+          .classed('gene-path', true)
+          .attr('d', lineFn)
+          .attr('stroke', 'orange')
+          .attr('stroke-width', '2')
+          .attr('fill', 'none')
+
+      })
+      .on('mouseout', function () {
+        line.remove();
+      })
+
+    select.select('.mean').html(function (d) { return d.avg });
+
+    select.select('.fold-change-value').remove();
+    select.selectAll('.fold-change-value').data(function (d, i) { return d.foldChanges })
+      .enter()
+        .append('td')
+        .attr('class', 'fold-change-value')
+        .html(function (d) { return d.value });
+
+    select.exit().remove();
+
+    this.tableSort = new Tablesort(document.getElementById('the-table'), { descending: true });
+    //this.tableSort.refresh();
+  },
+  drawDrawingPad: function () {
+    var that = this;
+
+    this._paramFilters = [];
+    this._foldChanges = {};
+
+    var el = document.querySelector('#drawing-pad');
+    var padSvg = makeDrawingPad(el, DATA_FILES);
+
+    padSvg.on('paramsChange', function (e) {
+      var paramsObj = d3.event.detail
+      var params;
+
+      for (var param in paramsObj) {
+
+        if (that._paramFilters.indexOf(param) !== -1) continue;
+
+        params = paramsObj[param];
+
+        var higherCell = params.lower;
+        var lowerCell = params.higher;
+        var foldChange = params.foldChange;
+
+        that._foldChanges[param] = [higherCell, lowerCell];
+
+        that.addFilter(param, function (row) {
+          var cells = Object.keys(that.organism.cells);
+
+          var higher = cells.indexOf(higherCell);
+          var lower = cells.indexOf(lowerCell);
+
+          if (higher === -1 || lower === -1) {
+            return true;
+          }
+
+          return (row[higher] / (row[lower] || .0001)) >= foldChange;
+        });
+
+        that._paramFilters.push(param);
+      }
+
+      that._paramFilters.forEach(function (param) {
+        if (!paramsObj.hasOwnProperty(param)) {
+          delete that._foldChanges[param];
+          that.removeFilter(param);
+        }
+      });
+
+
+    });
+
+
   }
 }
 

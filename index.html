@@ -4,21 +4,124 @@
   <head>
     <meta charset="utf-8">
     <title>Sequencing data browser</title>
+    <link rel="stylesheet" type="text/css" href="./drawing_pad.css">
     <style type="text/css">
       .axis path, .axis line {
         fill: none;
         stroke: black;
       }
+      .link-icon:before {
+        content: " ";
+        background-image: url('/lib/1417516031_link-external.svg');
+        width: 13px;
+        height: 16px;
+        display: inline-block;
+        background-size: 13px 16px;
+        margin-right: 5px;
+
+        position: relative;
+        top: 3px;
+      }
+
+      #the-table {
+        border-collapse: collapse;
+      }
+
+      #the-table th {
+        min-width: 100px;
+      }
+
+      #the-table th {
+        padding: 4px 8px;
+        background: #d0d0d0;
+        cursor: pointer;
+      }
+
+      #data-table tr:hover {
+        background: rgb(220, 220, 230);
+      }
+
+      #the-table, th, tr, td {
+        border: 1px solid #d0d0d0;
+      }
+
+      #data-table tr td {
+        padding: 4px;
+        font-family: monospace;
+      }
+
+      #data-table tr td:nth-child(2) {
+        text-align: right;
+      }
+
+      table th.sort-header:after {
+        content:'';
+        float:right;
+        margin-top:7px;
+        border-width:0 4px 4px;
+        border-style:solid;
+        border-color:#404040 transparent;
+        visibility:hidden;
+      }
+      table th.sort-header:hover:after {
+        visibility:visible;
+      }
+      table th.sort-up:after,
+      table th.sort-down:after,
+      table th.sort-down:hover:after {
+        visibility:visible;
+        opacity:0.4;
+      }
+      table th.sort-up:after {
+        border-bottom:none;
+        border-width:4px 4px 0;
+      }
+
+      #drawing-pad {
+        position: absolute;
+      }
+
+      #cells-container {
+        margin-left: 920px;
+        border: 1px solid #ccc;
+        border-radius: 2px;
+        width: 400px;
+        height: 200px;
+        padding: 0px 12px;
+      }
+
+      #aaa {
+        height: 280px;
+      }
+
+      h2 {
+        margin-bottom: 2px;
+      }
+
+      #table-container {
+        margin-left: 920px;
+        height: 500px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        padding: 8px;
+      }
+
+
     </style>
   </head>
 
   <body>
 
-    <h2>Cells</h2>
-    <ul id="present-cells"></ul>
-    <div>
-      <button type="button">Add cell</button>
+  <div id="aaa">
+    <h2>Fold change filter</h2>
+    <div id="drawing-pad"></div>
+
+    <div id="cells-container">
+      <h2>Cells</h2>
+      <ul id="present-cells"></ul>
     </div>
+  </div>
+
 
     <h2>Filters</h2>
     <div id="filters">
@@ -46,11 +149,31 @@
     <form id="scale">
       <label>Linear</label><input checked="true" type="radio" name="scale" value="linear">
       <label>Logarithmic</label><input id="scale_log" type="radio" name="scale" value="log">
+      <div>
+        <label>Clustering</label><input id="clustering" type="range" value=10 min=10 max=300>
+      </div>
     </form>
-    <div id="vis_container"></svg>
+    <div id="vis_container"></div>
+
+    <div id="table-container">
+      <div id="table-label"></div>
+      <table id="the-table">
+        <thead>
+          <tr id="table-headers">
+            <th class="sort-default">Name</th>
+            <th>Mean RPKM</th>
+          </tr>
+        </thead>
+        <tbody id="data-table">
+        </tbody>
+      </table>
+    </div>
 
     <script type="text/javascript" src="lib/d3.v3.js"></script>
     <script type="text/javascript" src="lib/jquery-2.1.1.min.js"></script>
+    <script type="text/javascript" src="lib/tablesort.min.js"></script>
+    <script type="text/javascript" src="lib/FileSaver.min.js"></script>
+    <script type="text/javascript" src="dec1.js"></script>
     <script type="text/javascript" src="organism.js"></script>
     <script type="text/javascript" src="index.js"></script>
   </body>
