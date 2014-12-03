@@ -59,10 +59,9 @@ function Graph(id, height, width) {
 
   this.svg = d3.select(id)
     .append('svg')
+    .attr('id', 'the-main-svg')
     .attr('width', width)
     .attr('height', height)
-    .style('position', 'absolute');
-
 
   var table = document.getElementById('the-table');
   this.tableSort = new Tablesort(table, { descending: true });
@@ -485,9 +484,10 @@ Graph.prototype = {
       .html(' (download)')
       .attr('href', '#')
       .on('click', function () {
-        var tableHTML = '<table>' + document.getElementById('the-table').innerHTML + '</table>';
+        var svgHTML = that.svg[0][0].outerHTML;
+        var tableHTML = document.getElementById('the-table').outerHTML;
 
-        tableHTML = '<html><body>' + '<h1>Results from ' + (new Date()) + '</h1>' + tableHTML + '</body></html>';
+        tableHTML = '<html><body>' + '<h1>Results from ' + (new Date()) + '</h1>' + svgHTML + tableHTML + '</body></html>';
 
         var blob = new Blob([tableHTML], {type: 'text/html'});
         saveAs(blob, 'gene_expression_results.html')
