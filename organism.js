@@ -24,7 +24,7 @@
 
       data.forEach(function (gene) {
         var check = genomeCheck.shift();
-        if (gene.name !== check) throw Error('Cell\'s genome not identical to organism\'s genome');
+        if (gene.name !== check) throw new Error('Cell\'s genome not identical to organism\'s genome');
         rpkms.push(gene.rpkm);
       });
 
@@ -39,7 +39,7 @@
       var idx = this.genome.indexOf(geneName)
         , genes = {}
 
-      if (idx === -1) throw Error('' + geneName + ' is not in this organism\'s genome.');
+      if (idx === -1) throw new Error('' + geneName + ' is not in this organism\'s genome.');
 
       for (var cell in this.cells) {
         genes[cell] = this.cells[cell][idx];

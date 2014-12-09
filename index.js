@@ -25,6 +25,7 @@ var DATA_FILES = [
 
 /* Utilities */
 
+// Parse a gene expression file and return a promise containing its filename and data.
 function parseFile(dataFile) {
   return new Promise(function (resolve, reject) {
     d3.text(dataFile, function (err, text) {
@@ -57,6 +58,7 @@ function Graph(id, height, width) {
   height = height || consts.PLOT_HEIGHT;
   width = width || consts.PLOT_WIDTH;
 
+  // Create the SVG element that will contain the graph
   this.svg = d3.select(id)
     .append('svg')
     .attr('id', 'the-main-svg')
@@ -66,39 +68,34 @@ function Graph(id, height, width) {
   var table = document.getElementById('the-table');
   this.tableSort = new Tablesort(table, { descending: true });
 
-  this.initData();
+  this.organism = new Organism();
+  this.filters = {};
+
+  // Initialize plot, 
   this.drawDrawingPad();
   this.initListeners();
 }
 
 Graph.prototype = {
-  // Create the SVG element that will contain the graph
-  initData: function () {
-    this.organism = new Organism();
-    this.filters = {};
-  },
-
   initListeners: function () {
     d3.select('#scale').on('change', this.draw.bind(this));
   },
 
+  // Refresh graph whenever a cell is added or removed
   addCell: function (name, cell) {
-    var that = this;
-
     this.organism.addCell(name, cell);
     this.draw();
   },
-
   removeCell: function (name) {
     this.organism.removeCell(name);
     this.draw();
   },
-
   clearCells: function () {
     this.organism.reset();
     this.draw();
   },
 
+  // Functions handling filters. The graph is redrawn after any of them are called.
   addFilter: function (name, filter) {
     this.filters[name] = filter;
     this.draw();
@@ -116,8 +113,10 @@ Graph.prototype = {
     this.draw();
   },
 
+  // Takes a row of RPKMs and checks if it passes all filters
   passesFilters: function (row, geneName) {
     var ok = true;
+
     for (var key in this.filters) {
       ok = this.filters[key](row, geneName);
       if (!ok) break;
@@ -125,6 +124,12 @@ Graph.prototype = {
     return ok;
   },
 
+  // Get the data for the graph. Returns an object with the following keys
+  //
+  //   cells: An array of the names of all the cells represented in the data
+  //   allGenes: An array of objects that contain the gene name along with all sample cell RPKMs of that gene.
+  //   filteredGenes: The same as allGenes, but containing only those genes which passed all given filters.
+  //   max, min: objects containing the maximum of all genes as well as filtered genes.
   getData: function (nonZero) {
     var data = this.organism.asMatrix()
       , allGenes = []
@@ -152,28 +157,42 @@ Graph.prototype = {
       }
     }, this)
 
-    return { cells: data.cells, allGenes: allGenes, filteredGenes: filteredGenes }
+    return {
+      cells: data.cells,
+      allGenes: allGenes,
+      filteredGenes: filteredGenes,
+      max: max,
+      min: min
+    }
   },
 
-  getLines: function (scale, geneMatrix) {
-    var NUM_BINS = document.querySelector('#clustering').value
+  // Returns data for gene lines to be fed to d3.data
+  getLines: function (scale, genes) {
 
-    var all = Array.prototype.concat.apply([], geneMatrix);
+    // The bins lines will be clustered into
+    var bins = (function (numBins) {
+      var bins = []
+        , range = scale.range()
+        , step = (range[1] - range[0]) / numBins
 
-    var bins = d3.scale.linear()
-      .domain(scale.range())
-      .ticks(NUM_BINS)
-      .reverse()
-      .map(function (px) { return scale.invert(px) })
+      for (var i = 0; i < (numBins + 1); i++) {
+        bins.push(scale.invert(range[0] + (i * step)));
+      }
 
-    var numCells = geneMatrix[0].length;
+      return bins.reverse();
+    })(parseInt(document.querySelector('#clustering').value, 10));
+
+    var numCells = genes[0].rpkms.length;
      
     var genesByBin = bins.reduce(function (acc, bin, binIdx) {acc[binIdx] = []; return acc}, {});
-    var binsByGene = geneMatrix.reduce(function (acc, gene, geneIdx) {acc[geneIdx] = []; return acc}, { length: geneMatrix.length });
+    var binsByGene = genes.reduce(function (acc, gene, geneIdx) {
+      acc[geneIdx] = [];
+      return acc
+    }, { length: genes.length });
 
     for (var cellIdx = 0; cellIdx < numCells; cellIdx++) {
-      var cell = geneMatrix
-        .map(function (gene, geneIdx) { return { geneIdx: geneIdx, rpkm: gene[cellIdx] } })
+      var cell = genes
+        .map(function (gene, geneIdx) { return { geneIdx: geneIdx, rpkm: gene.rpkms[cellIdx] } })
         .sort(function (a, b) { return a.rpkm - b.rpkm });
       var binIdx = 0;
       var binLength = bins.length;
@@ -245,14 +264,9 @@ Graph.prototype = {
 
     this.drawTable(data);
 
-    var maxAllRPKM = d3.max(data.allGenes.map(function (gene) { return d3.max(gene.rpkms) }))
-      , minAllRPKM = d3.min(data.allGenes.map(function (gene) { return d3.min(log ? gene.rpkms.filter(parseInt) : gene.rpkms) }))
-      , maxFilteredRPKM = d3.max(data.filteredGenes.map(function (gene) { return d3.max(gene.rpkms) }))
-      , minFilteredRPKM = d3.min(data.filteredGenes.map(function (gene) { return d3.min(log ? gene.rpkms.filter(parseInt) : gene.rpkms) }))
-
     // Scales
     var y = (log ? d3.scale.log() : d3.scale.linear())
-      .domain([maxFilteredRPKM, minFilteredRPKM])
+      .domain([data.max.filtered, data.min.filtered])
       .range([0 + consts.CELL_PADDING, consts.CELL_HEIGHT - consts.CELL_PADDING])
       .nice()
 
@@ -262,7 +276,7 @@ Graph.prototype = {
 
     this.y = y;
 
-    var y2 = y.copy().domain([maxAllRPKM, minAllRPKM]).nice();
+    var y2 = y.copy().domain([data.max.all, data.min.all]).nice();
 
     var yAxis = d3.svg.axis()
       .scale(y)
@@ -318,14 +332,9 @@ Graph.prototype = {
         .attr('stroke', '#ccc')
     }
 
-    var lineFn = d3.svg.line()
-      .x(function (d, i) { return x(i) })
-      .y(function (d, i) { return y(d) })
-      .interpolate('cardinal')
-      .tension(0.85)
+    var lines = this.getLines(y, data.filteredGenes);
 
-    var lines = this.getLines(y, data.filteredGenes.map(function (g) { return g.rpkms }));
-
+    // Lines representing genes
     this.svg.selectAll('.gene-group').data(lines)
         .enter()
       .append('g').attr('class', 'gene-group').selectAll('line')
@@ -340,18 +349,7 @@ Graph.prototype = {
       .attr('stroke-width', '1')
       .attr('opacity', '.2')
 
-    /*
-    this.svg.append('g').selectAll('.gene-path').remove().data(data.filteredGenes)
-        .enter()
-      .append('path').datum(function (d) { return d.rpkms })
-      .classed('gene-path', true)
-      .attr('d', lineFn)
-      .attr('stroke', 'blue')
-      .attr('stroke-width', '1')
-      .style('opacity', '.1')
-      .attr('fill', 'none')
-    */
-
+    // Parallel axes, representing cells
     this.svg.selectAll('.axis').data(data.cells.map(function (cell) { return { name: cell } }))
         .enter()
       .append('g')
@@ -395,54 +393,9 @@ Graph.prototype = {
           .attr('transform', 'rotate(25, 0, ' + outlines.bottom + ')')
 
       });
-
-    var brush = d3.svg.brush().y(y2)
-      //.on('brush', brushed)
-
-    this.svg.append('g')
-      .attr('class', 'brush-axis')
-      .call(yAxis2)
-
-    this.svg.append('g')
-      .attr('class', 'brush')
-      .call(brush)
-      .selectAll('rect')
-        .attr('width', 50)
-
-    var histogramDataAll = d3.layout.histogram()
-      .bins(y2.ticks(50))
-      (Array.prototype.concat.apply([], data.allGenes.map(function (gene) { return gene.rpkms })))
-
-    var histogramDataFiltered = d3.layout.histogram()
-      .bins(y2.ticks(20))
-      (Array.prototype.concat.apply([], data.filteredGenes.map(function (gene) { return gene.rpkms })))
-
-    var histogramX = d3.scale.linear()
-      .domain([0, d3.max(histogramDataAll, function (d) { return d.y })])
-      .range([0, 50])
-
-    var bar = this.svg.selectAll('.bar')
-        .data(histogramDataAll)
-      .enter().append('g')
-        .attr('class', 'bar')
-        .attr('transform', function (d) { return 'translate(' + histogramX(d.y) + ',' + (y2(d.x) - 14) + ')' })
-
-    bar.append('rect')
-      .attr('y', 10)
-      .attr('width', 10)
-      .attr('height', 3)
-
-    var bins = d3.scale.linear().domain(y.range()).ticks(100).reverse().map(function (d) { return y.invert(d) });
-    var hist = d3.layout.histogram().bins(bins);
-
-    data.cells.forEach(function (cell, i) {
-      var these = data.filteredGenes.map(function (d) { return d.rpkms[i] }).sort();
-      var those = data.filteredGenes.map(function (d) { return d.rpkms[i + 1] }).sort();
-      var zzz = hist(these);
-    }, this);
-
   },
   
+  // Draw the data table giving details about present genes
   drawTable: function (data) {
     var that = this;
 
@@ -465,9 +418,9 @@ Graph.prototype = {
 
         return {
           label: higher + ' -> ' + lower,
-          value: higherVal / (lowerVal || .0001)
+          value: higherVal / (lowerVal || 0.0001)
         }
-      }).filter(function (zzz) { return zzz });
+      });
 
       return {
         label: gene.name,
@@ -478,6 +431,8 @@ Graph.prototype = {
     });
 
     d3.select('#table-label').select('div').remove();
+
+    // The "export" function to save results
     d3.select('#table-label').append('div')
       .html('' + toDraw.length + ' genes ')
       .append('a')
@@ -495,7 +450,7 @@ Graph.prototype = {
       });
 
 
-    var foldChanges = toDraw[0].foldChanges.map(function (thing) { return thing.label });
+    var foldChanges = toDraw[0].foldChanges.map(function (fc) { return fc.label });
 
     d3.selectAll('.fold-change-header').remove();
 
@@ -514,8 +469,9 @@ Graph.prototype = {
       .interpolate('cardinal')
       .tension(0.85)
 
+    // When a user hovers over a table row (which represents a gene), darw that
+    // gene on the graph
     var line = null;
-
     select.enter()
       .append('tr')
       .attr('data-cell', function (d) { return d.label })
@@ -550,9 +506,11 @@ Graph.prototype = {
 
     select.exit().remove();
 
+    // Initialize Tablesort plugin
     this.tableSort = new Tablesort(document.getElementById('the-table'), { descending: true });
-    //this.tableSort.refresh();
   },
+
+  // Draw the drawing pad that allows users to specify fold changes
   drawDrawingPad: function () {
     var that = this;
 
@@ -588,7 +546,7 @@ Graph.prototype = {
             return true;
           }
 
-          return (row[higher] / (row[lower] || .0001)) >= foldChange;
+          return (row[higher] / (row[lower] || 0.0001)) >= foldChange;
         });
 
         that._paramFilters.push(param);
